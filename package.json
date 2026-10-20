@@ -2,7 +2,7 @@
   "name": "sonarqube-rest-api-mcp",
   "displayName": "SonarQube REST API MCP",
   "description": "Connect VS Code to a remote SonarQube REST API MCP server.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "BDarshan1052",
   "license": "MIT",
   "repository": {
