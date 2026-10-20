@@ -1,355 +1,121 @@
-# SonarQube MCP
+# SonarQube MCP for VS Code
 
-Secure, dependency-free Node.js 20+ MCP service for multi-user SonarQube access.
-The service supports both a remote HTTP transport for public deployments and a
-local stdio transport for development or desktop MCP clients.
-
-Each remote MCP caller presents its own bearer token. The server maps that
-caller token to the caller's SonarQube token through a credential provider.
-SonarQube tokens are never accepted from tool arguments and are never logged.
-
-## Features
-
-- Remote MCP JSON-RPC endpoint: `POST /mcp`
-- Health endpoint: `GET /healthz`
-- Local stdio MCP entrypoint
-- Per-user bearer-token authentication
-- SHA-256 hashed MCP token support
-- Per-user SonarQube token mapping
-- Request body and pagination limits
-- SonarQube request timeouts
-- No runtime dependencies beyond Node.js built-ins
-- Docker image and GitHub Actions CI configuration
+Connect VS Code's MCP support to a deployed SonarQube MCP HTTP server. The
+extension registers the server programmatically through
+`vscode.lm.registerMcpServerDefinitionProvider` and sends the configured token
+as an `Authorization: Bearer <token>` header.
 
 ## Requirements
 
-- Node.js 20 or newer
-- A SonarQube server reachable by the MCP service
-- A SonarQube user token for each configured user
-- For a public deployment: an HTTPS domain or reverse proxy
+- VS Code 1.102 or newer.
+- A reachable HTTPS deployment of the SonarQube MCP HTTP server.
+- A user-specific MCP token provisioned by the server administrator.
 
-## Clone and install
+## Install and use
+
+### From source
+
+Clone this repository and open it in VS Code:
 
 ```bash
 git clone https://github.com/darshan1005/sonarqube-mcp.git
 cd sonarqube-mcp
-npm install
 ```
 
-This project currently has no external runtime dependencies, but running
-`npm install` validates the package and prepares the project for future updates.
+Press `F5` to launch an Extension Development Host.
 
-## Configuration
+### From a VSIX package
 
-Copy the example environment file:
+Build the package:
 
 ```bash
-cp .env.example .env
+npx --yes @vscode/vsce package
 ```
 
-On Windows PowerShell, use:
+Then use **Extensions: Install from VSIX...** in VS Code and select the
+generated `sonarqube-mcp-0.1.0.vsix` file.
 
-```powershell
-Copy-Item .env.example .env
-```
+### Configure a user connection
 
-The available settings are:
-
-| Variable | Required | Description | Default |
-| --- | --- | --- | --- |
-| `SONAR_URL` | Yes | SonarQube base URL, without `/api` | — |
-| `SONAR_USERS_JSON` | Yes | JSON array mapping MCP users to SonarQube tokens | — |
-| `HOST` | No | HTTP bind address | `127.0.0.1` |
-| `PORT` | No | HTTP port | `3000` |
-| `MAX_BODY_BYTES` | No | Maximum JSON request size | `1048576` |
-| `SONAR_TIMEOUT_MS` | No | SonarQube request timeout | `10000` |
-| `MAX_PAGE_SIZE` | No | Maximum page size accepted by tools | `100` |
-
-Example `.env`:
-
-```env
-HOST=0.0.0.0
-PORT=3000
-SONAR_URL=https://sonarqube.example.com
-SONAR_USERS_JSON=[{"id":"alice","tokenHash":"SHA256_HASH_OF_MCP_TOKEN","sonarToken":"ALICE_SONARQUBE_TOKEN"}]
-MAX_BODY_BYTES=1048576
-SONAR_TIMEOUT_MS=10000
-MAX_PAGE_SIZE=100
-```
-
-Do not commit `.env`, bearer tokens, SonarQube tokens, or an `mcp.json` file
-containing real credentials.
-
-## Configure users and tokens
-
-`SONAR_USERS_JSON` is an array. Each user must include:
-
-- `id`: an internal user identifier
-- `tokenHash` or `token`: the MCP caller credential
-- `sonarToken`: that user's SonarQube token
-
-Production deployments should use `tokenHash`:
-
-```json
-[
-  {
-    "id": "alice",
-    "tokenHash": "sha256-hex-value",
-    "sonarToken": "alice-sonarqube-token"
-  },
-  {
-    "id": "bob",
-    "tokenHash": "another-sha256-hex-value",
-    "sonarToken": "bob-sonarqube-token"
-  }
-]
-```
-
-Generate a SHA-256 hash for an MCP token:
-
-```bash
-node -e "console.log(require('node:crypto').createHash('sha256').update(process.argv[1]).digest('hex'))" -- "your-mcp-token"
-```
-
-PowerShell example:
-
-```powershell
-node -e 'console.log(require("node:crypto").createHash("sha256").update(process.argv[1]).digest("hex"))' -- 'your-mcp-token'
-```
-
-The plain `token` property is supported for local development, but should not
-be used in source-controlled files. Replace the static provider in
-`src/auth.js` with a database or OIDC-backed provider for user provisioning,
-token rotation, and larger deployments.
-
-## Run the remote HTTP server
-
-For local development:
-
-```bash
-npm start
-```
-
-The server listens at:
+Open the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`) and run:
 
 ```text
-http://127.0.0.1:3000
+SonarQube MCP: Configure
 ```
 
-For a public deployment, set `HOST=0.0.0.0` and put the service behind an HTTPS
-reverse proxy or load balancer. The MCP endpoint is:
+Enter:
+
+1. The user's MCP server URL, for example `https://sonar-mcp.example.com/mcp`.
+2. The user's own MCP bearer token.
+
+Each VS Code user configures their own URL and token. The URL is stored in VS
+Code global state, and the bearer token is stored in VS Code `SecretStorage`.
+The token is not written to the workspace or `mcp.json`.
+
+Available commands:
+
+- **SonarQube MCP: Configure** — save or replace the endpoint and token.
+- **SonarQube MCP: Test Connection** — call the endpoint origin's `/healthz`.
+- **SonarQube MCP: Clear Credentials** — remove the endpoint and token.
+- **SonarQube MCP: Show Status** — show whether credentials are configured.
+
+After configuration, use VS Code Agent mode and select the SonarQube MCP tools.
+
+## Server configuration expected by the extension
+
+The remote service must expose:
 
 ```text
-https://your-domain.example.com/mcp
+GET  /healthz
+POST /mcp
 ```
 
-The health endpoint is intentionally unauthenticated:
+The MCP endpoint must accept:
+
+```http
+Authorization: Bearer USER_SPECIFIC_MCP_TOKEN
+Content-Type: application/json
+```
+
+The server maps each MCP token to that user's SonarQube permissions. Never
+share one user's token with another user.
+
+## Security
+
+- The endpoint URL is stored in VS Code global state.
+- The bearer token is stored in VS Code `SecretStorage`, not workspace settings,
+  source files, or logs.
+- The token is only placed in the in-memory MCP server definition and is never
+  included in status messages or error output.
+- Use HTTPS for production deployments.
+- Issue a separate least-privilege token to each user.
+- Rotate or revoke tokens through the server's credential provider.
+- The connection test calls unauthenticated `/healthz`; MCP requests remain
+  authenticated by the configured bearer header.
+
+## Publishing to the VS Code Marketplace
+
+Update the `version`, `publisher`, repository metadata, and Marketplace listing
+details in `package.json`. Create a publisher and personal access token in the
+Visual Studio Marketplace publisher portal, then run:
 
 ```bash
-curl https://your-domain.example.com/healthz
+npx --yes @vscode/vsce package
+npx --yes @vscode/vsce publish
 ```
 
-The MCP endpoint requires a user-specific bearer token:
+The manifest does not require an icon, so packaging does not depend on a
+placeholder asset.
 
-```bash
-curl https://your-domain.example.com/mcp \
-  -H "Authorization: Bearer YOUR_USER_MCP_TOKEN" \
-  -H "Content-Type: application/json" \
-  --data '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
-```
-
-Do not pass tokens in query strings or tool arguments.
-
-## Configure a remote MCP client
-
-### VS Code extension
-
-This repository includes a plain JavaScript VS Code extension in
-[`vscode-extension`](vscode-extension). It registers the remote server through
-VS Code's MCP API and keeps each user's bearer token in VS Code SecretStorage.
-Open that folder, follow its [README](vscode-extension/README.md), or install
-the Marketplace package when published. Use the Command Palette commands
-**SonarQube MCP: Configure**, **Test Connection**, **Clear Credentials**, and
-**Show Status** to manage the connection without putting the token in a
-workspace file.
-
-### OpenCode / OmniRush configuration
-
-OpenCode uses `opencode.jsonc` and an `mcp` section. Add this configuration:
-
-```jsonc
-{
-  "$schema": "https://opencode.ai/config.json",
-  "mcp": {
-    "sonarqube": {
-      "type": "remote",
-      "url": "https://your-domain.example.com/mcp",
-      "headers": {
-        "Authorization": "Bearer REPLACE_WITH_USER_MCP_TOKEN"
-      },
-      "oauth": false,
-      "enabled": true,
-      "timeout": 30000
-    }
-  }
-}
-```
-
-Replace the URL and bearer token. Give each person their own MCP token so the
-server uses that person's SonarQube permissions and audit identity.
-
-The local app documentation covers custom workspace MCP servers in
-`start-here/connect-your-stack/add-an-mcp-server.mdx` and organization-managed
-connections in `cloud/share-with-your-team/shared-mcp-connections.mdx`.
-
-### Generic `mcp.json`
-
-Clients that use the common `mcpServers` format can use:
-
-```json
-{
-  "mcpServers": {
-    "sonarqube": {
-      "url": "https://your-domain.example.com/mcp",
-      "headers": {
-        "Authorization": "Bearer REPLACE_WITH_USER_MCP_TOKEN"
-      }
-    }
-  }
-}
-```
-
-Keep this file outside source control when it contains a real token. If needed,
-add it to `.gitignore`:
-
-```gitignore
-mcp.json
-```
-
-## Configure a local stdio MCP client
-
-The stdio entrypoint uses the first user in `SONAR_USERS_JSON`. Stdio has no
-HTTP bearer-header channel, so use the remote transport for real multi-user
-operation.
-
-### OpenCode local configuration
-
-```jsonc
-{
-  "$schema": "https://opencode.ai/config.json",
-  "mcp": {
-    "sonarqube": {
-      "type": "local",
-      "command": [
-        "node",
-        "C:\\Users\\YOUR_USER\\sonarqube-mcp\\src\\stdio.js"
-      ],
-      "environment": {
-        "SONAR_URL": "https://sonarqube.example.com",
-        "SONAR_USERS_JSON": "[{\"id\":\"local-user\",\"token\":\"stdio-placeholder\",\"sonarToken\":\"YOUR_SONARQUBE_TOKEN\"}]"
-      },
-      "enabled": true,
-      "timeout": 30000
-    }
-  }
-}
-```
-
-### Generic stdio `mcp.json`
-
-```json
-{
-  "mcpServers": {
-    "sonarqube": {
-      "command": "node",
-      "args": [
-        "C:\\Users\\YOUR_USER\\sonarqube-mcp\\src\\stdio.js"
-      ],
-      "env": {
-        "SONAR_URL": "https://sonarqube.example.com",
-        "SONAR_USERS_JSON": "[{\"id\":\"local-user\",\"token\":\"stdio-placeholder\",\"sonarToken\":\"YOUR_SONARQUBE_TOKEN\"}]"
-      }
-    }
-  }
-}
-```
-
-Alternatively, run the stdio server directly:
-
-```bash
-npm run start:stdio
-```
-
-## Available tools
-
-The MCP server exposes:
-
-- `sonar_search_projects`
-- `sonar_get_project`
-- `sonar_get_measures`
-- `sonar_search_issues`
-- `sonar_quality_gate`
-- `sonar_component_tree`
-
-Tool requests are bounded by `MAX_PAGE_SIZE`, and SonarQube calls are bounded by
-`SONAR_TIMEOUT_MS`.
-
-## Docker deployment
-
-Build the image:
-
-```bash
-docker build -t sonarqube-mcp .
-```
-
-Run locally with an environment file:
-
-```bash
-docker run --rm --env-file .env -p 3000:3000 sonarqube-mcp
-```
-
-For production, provide secrets through the platform's secret manager rather
-than baking `.env` into the image. Put TLS, rate limiting, access logging, and
-network policy in front of the container.
-
-## Security and production checklist
-
-Before exposing the service publicly:
-
-1. Use HTTPS; do not expose plain HTTP to the internet.
-2. Use a separate, least-privilege SonarQube token for every user or service account.
-3. Store `SONAR_USERS_JSON` in a secret manager.
-4. Use `tokenHash`, not plain MCP `token`, in production.
-5. Do not log authorization headers or environment variables.
-6. Add reverse-proxy or gateway rate limiting.
-7. Rotate MCP and SonarQube tokens regularly.
-8. Restrict network access from the MCP service to trusted SonarQube hosts.
-9. Replace `StaticCredentialProvider` with OIDC or a database-backed provider for user registration and revocation.
-10. Review SonarQube permissions for every mapped user.
-
-The current implementation is intentionally read-only: it exposes SonarQube
-project, measure, issue, quality-gate, and component queries, not mutation
-endpoints.
-
-## Tests and checks
-
-Run the test suite:
-
-```bash
-npm test
-```
-
-Run JavaScript syntax checks:
+## Development checks
 
 ```bash
 npm run check
 ```
 
-GitHub Actions runs both checks for pushes and pull requests.
+This runs Node's syntax validation against the extension entrypoint.
 
 ## Repository
-
-Public repository:
 
 ```text
 https://github.com/darshan1005/sonarqube-mcp
