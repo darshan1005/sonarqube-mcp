@@ -1,0 +1,13 @@
+{
+  "name": "sonarqube-mcp",
+  "version": "1.0.0",
+  "description": "Secure multi-user remote MCP server for SonarQube",
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "node src/server.js",
+    "start:stdio": "node src/stdio.js",
+    "test": "node --test",
+    "check": "node --check src/server.js && node --check src/stdio.js"
+  }
+}
