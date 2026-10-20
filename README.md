@@ -107,13 +107,25 @@ npx --yes @vscode/vsce publish
 The manifest does not require an icon, so packaging does not depend on a
 placeholder asset.
 
-## Development checks
+## Development and checks
+
+Run tests:
+
+```bash
+npm test
+```
+
+Run JavaScript syntax checks:
 
 ```bash
 npm run check
 ```
 
-This runs Node's syntax validation against the extension entrypoint.
+Package the extension:
+
+```bash
+npm run package
+```
 
 ## Repository
 
