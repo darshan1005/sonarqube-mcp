@@ -162,6 +162,17 @@ Do not pass tokens in query strings or tool arguments.
 
 ## Configure a remote MCP client
 
+### VS Code extension
+
+This repository includes a plain JavaScript VS Code extension in
+[`vscode-extension`](vscode-extension). It registers the remote server through
+VS Code's MCP API and keeps each user's bearer token in VS Code SecretStorage.
+Open that folder, follow its [README](vscode-extension/README.md), or install
+the Marketplace package when published. Use the Command Palette commands
+**SonarQube MCP: Configure**, **Test Connection**, **Clear Credentials**, and
+**Show Status** to manage the connection without putting the token in a
+workspace file.
+
 ### OpenCode / OmniRush configuration
 
 OpenCode uses `opencode.jsonc` and an `mcp` section. Add this configuration:
