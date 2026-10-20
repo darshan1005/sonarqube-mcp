@@ -1,15 +1,23 @@
-# SonarQube MCP for VS Code
+# SonarQube REST API MCP for VS Code
 
-Connect VS Code's MCP support to a deployed SonarQube MCP HTTP server. The
-extension registers the server programmatically through
-`vscode.lm.registerMcpServerDefinitionProvider` and sends the configured token
-as an `Authorization: Bearer <token>` header.
+Connect VS Code's Model Context Protocol (MCP) directly to SonarQube's REST API over standard input/output (`stdio`).
+
+The extension includes a built-in, dependency-free Node.js MCP server that communicates directly with your SonarQube instance (e.g. `https://sonarcloud.io` or `http://localhost:9000`). It registers the server with VS Code via `vscode.lm.registerMcpServerDefinitionProvider` using `McpStdioServerDefinition`.
+
+## Features
+
+- **Direct REST API Access**: Connects directly to SonarQube REST APIs (`/api/projects`, `/api/measures`, `/api/issues`, `/api/qualitygates`, `/api/components`).
+- **Zero External Dependencies**: Uses native Node.js built-ins.
+- **Optional Access Token**: Works with public / anonymous SonarQube instances without a token, or with a personal access token for private projects.
+- **Secure Credential Storage**: When an access token is provided, it is stored encrypted in VS Code `SecretStorage`, never in plaintext workspace files.
+- **Interactive Configuration**: Built-in commands to configure, test connection, view status, and clear credentials.
 
 ## Requirements
 
 - VS Code 1.102 or newer.
-- A reachable HTTPS deployment of the SonarQube MCP HTTP server.
-- A user-specific MCP token provisioned by the server administrator.
+- Node.js 20 or newer (used to execute the bundled stdio server).
+- A reachable SonarQube server URL (e.g. `https://sonarcloud.io`, `https://sonarqube.example.com`, or `http://localhost:9000`).
+- *(Optional)* A SonarQube user access token for private instances.
 
 ## Install and use
 
@@ -29,13 +37,12 @@ Press `F5` to launch an Extension Development Host.
 Build the package:
 
 ```bash
-npx --yes @vscode/vsce package
+npm run package
 ```
 
-Then use **Extensions: Install from VSIX...** in VS Code and select the
-generated `sonarqube-mcp-0.1.0.vsix` file.
+Then in VS Code, open the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`), select **Extensions: Install from VSIX...**, and choose the generated `sonarqube-rest-api-mcp-0.1.1.vsix` file.
 
-### Configure a user connection
+### Configure your connection
 
 Open the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`) and run:
 
@@ -45,67 +52,62 @@ SonarQube MCP: Configure
 
 Enter:
 
-1. The user's MCP server URL, for example `https://sonar-mcp.example.com/mcp`.
-2. The user's own MCP bearer token.
+1. **SonarQube Server URL**: The domain of your SonarQube server (e.g. `https://sonarcloud.io`, `https://sonarqube.example.com`, or `http://localhost:9000`).
+2. **SonarQube Access Token** *(Optional)*: Your personal access token from SonarQube (**User > My Account > Security > Generate Tokens**). Leave blank if your SonarQube server allows anonymous access.
 
-Each VS Code user configures their own URL and token. The URL is stored in VS
-Code global state, and the bearer token is stored in VS Code `SecretStorage`.
-The token is not written to the workspace or `mcp.json`.
+### Available Commands
 
-Available commands:
+- **SonarQube MCP: Configure** — set or update SonarQube URL, optional access token, and optional default project key.
+- **SonarQube MCP: Test Connection** — tests connectivity against `/api/system/status` or verifies your token with `/api/authentication/validate`.
+- **SonarQube MCP: Show Status** — view current configuration and authentication status.
+- **SonarQube MCP: Clear Credentials** — remove saved SonarQube URL, default project key, and stored access token.
 
-- **SonarQube MCP: Configure** — save or replace the endpoint and token.
-- **SonarQube MCP: Test Connection** — call the endpoint origin's `/healthz`.
-- **SonarQube MCP: Clear Credentials** — remove the endpoint and token.
-- **SonarQube MCP: Show Status** — show whether credentials are configured.
+## Example `mcp.json` Configuration Template
 
-After configuration, use VS Code Agent mode and select the SonarQube MCP tools.
+If you prefer to configure your workspace manually using `.vscode/mcp.json` (or global `mcp.json`), you can run the bundled server directly via `stdio`:
 
-## Server configuration expected by the extension
-
-The remote service must expose:
-
-```text
-GET  /healthz
-POST /mcp
+```jsonc
+{
+  "mcpServers": {
+    "sonarqube": {
+      "command": "node",
+      "args": [
+        // Path to server.js in the installed extension or repository
+        "path/to/server.js"
+      ],
+      "env": {
+        // Your SonarQube server base URL (e.g., https://sonarcloud.io or http://localhost:9000)
+        "SONARQUBE_URL": "https://sonarqube.example.com",
+        // Personal access token (OPTIONAL - omit or leave blank for public instances)
+        "SONARQUBE_TOKEN": "YOUR_SONARQUBE_ACCESS_TOKEN",
+        // Default project key (OPTIONAL - used when no projectKey is specified in tool calls)
+        "SONARQUBE_PROJECT_KEY": "YOUR_DEFAULT_PROJECT_KEY"
+      }
+    }
+  }
+}
 ```
 
-The MCP endpoint must accept:
+> [!TIP]
+> **Recommended:** Using the extension's **SonarQube MCP: Configure** command is preferred because VS Code manages the process automatically and saves your access token in encrypted `SecretStorage` instead of plain text in a workspace file.
 
-```http
-Authorization: Bearer USER_SPECIFIC_MCP_TOKEN
-Content-Type: application/json
-```
+## Available MCP Tools
 
-The server maps each MCP token to that user's SonarQube permissions. Never
-share one user's token with another user.
+Once connected, your AI assistant in VS Code Agent mode can call:
 
-## Security
-
-- The endpoint URL is stored in VS Code global state.
-- The bearer token is stored in VS Code `SecretStorage`, not workspace settings,
-  source files, or logs.
-- The token is only placed in the in-memory MCP server definition and is never
-  included in status messages or error output.
-- Use HTTPS for production deployments.
-- Issue a separate least-privilege token to each user.
-- Rotate or revoke tokens through the server's credential provider.
-- The connection test calls unauthenticated `/healthz`; MCP requests remain
-  authenticated by the configured bearer header.
-
-## Publishing to the VS Code Marketplace
-
-Update the `version`, `publisher`, repository metadata, and Marketplace listing
-details in `package.json`. Create a publisher and personal access token in the
-Visual Studio Marketplace publisher portal, then run:
-
-```bash
-npx --yes @vscode/vsce package
-npx --yes @vscode/vsce publish
-```
-
-The manifest does not require an icon, so packaging does not depend on a
-placeholder asset.
+- **`list_branches`**: List branches of a project with their quality gate status.
+- **`get_quality_gate_status`**: Get quality gate status and conditions for a project or branch.
+- **`list_projects`**: Search or list SonarQube projects visible to the authenticated user.
+- **`list_quality_gates`**: List quality gates and condition definitions.
+- **`get_measures`**: Fetch 30+ preconfigured metrics and measures (coverage, bugs, vulnerabilities, code smells, technical debt, ratings) for a project/branch.
+- **`search_issues`**: Search code issues by component, branch, severity, type, status, assignee, tag, language, or date.
+- **`search_hotspots`**: Search security hotspots for a project or branch with review status.
+- **`get_measures_history`**: Get historical project measures for trend analysis.
+- **`get_issue`**: Get full details for specific issues, including rule and location information.
+- **`get_hotspot`**: Get full details for a security hotspot, including rule recommendations.
+- **`get_project_activity`**: View project analysis history and scanner event timelines.
+- **`list_background_tasks`**: Check project compute engine (CE) analysis task status.
+- **`get_system_status`**: Check SonarQube server health and validate authentication.
 
 ## Development and checks
 
@@ -115,13 +117,13 @@ Run tests:
 npm test
 ```
 
-Run JavaScript syntax checks:
+Run syntax checks:
 
 ```bash
 npm run check
 ```
 
-Package the extension:
+Package extension:
 
 ```bash
 npm run package

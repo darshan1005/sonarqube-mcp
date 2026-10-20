@@ -1,3 +1,5 @@
+const path = require('node:path');
+
 let vscode;
 try {
   vscode = require('vscode');
@@ -6,69 +8,74 @@ try {
   vscode = null;
 }
 
-const URL_KEY = 'sonarqubeMcp.serverUrl';
-const TOKEN_KEY = 'sonarqubeMcp.token';
-const DEFAULT_URL = 'https://your-domain.example.com/mcp';
+const URL_KEY = 'sonarqubeMcp.sonarUrl';
+const TOKEN_KEY = 'sonarqubeMcp.sonarToken';
+const PROJECT_KEY = 'sonarqubeMcp.defaultProjectKey';
+const DEFAULT_URL = 'http://localhost:9000';
 const PROVIDER_ID = 'sonarqube-mcp.provider';
-const SERVER_LABEL = 'SonarQube MCP';
-const SERVER_VERSION = '0.1.0';
+const SERVER_LABEL = 'SonarQube REST API MCP';
 
-function parseServerUrl(value) {
+function parseSonarUrl(value) {
   let parsed;
   try {
     parsed = new URL(String(value || '').trim());
   } catch {
-    throw new Error('Enter a valid MCP URL, for example https://your-domain.example.com/mcp.');
+    throw new Error('Enter a valid SonarQube URL, for example https://sonarcloud.io or http://localhost:9000.');
   }
   if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
-    throw new Error('The MCP URL must use http:// or https://.');
+    throw new Error('The SonarQube URL must use http:// or https://.');
   }
   if (!parsed.hostname) {
-    throw new Error('The MCP URL must include a host.');
+    throw new Error('The SonarQube URL must include a host.');
   }
   return parsed;
 }
 
-function healthUrl(serverUrl) {
-  const parsed = parseServerUrl(serverUrl);
-  return new URL('/healthz', parsed.origin).toString();
+function systemStatusUrl(sonarUrl) {
+  const parsed = parseSonarUrl(sonarUrl);
+  return new URL('/api/system/status', parsed.origin).toString();
 }
 
-function redactUrl(serverUrl) {
+function validateAuthUrl(sonarUrl) {
+  const parsed = parseSonarUrl(sonarUrl);
+  return new URL('/api/authentication/validate', parsed.origin).toString();
+}
+
+function redactUrl(sonarUrl) {
   try {
-    const parsed = parseServerUrl(serverUrl);
-    return parsed.origin + (parsed.pathname === '/' ? '' : parsed.pathname);
+    const parsed = parseSonarUrl(sonarUrl);
+    return parsed.origin;
   } catch {
     return 'invalid URL';
   }
 }
 
-function createServerDefinition(serverUrl, token) {
-  const uri = (vscode?.Uri && typeof vscode.Uri.parse === 'function')
-    ? vscode.Uri.parse(serverUrl)
-    : serverUrl;
-  const headers = { Authorization: `Bearer ${token}` };
+function createServerDefinition(context, sonarUrl, token, defaultProject) {
+  const scriptPath = path.join(context?.extensionPath || __dirname, 'server.js');
+  const env = {
+    SONARQUBE_URL: sonarUrl
+  };
+  if (token) {
+    env.SONARQUBE_TOKEN = token;
+  }
+  if (defaultProject) {
+    env.SONARQUBE_PROJECT_KEY = defaultProject;
+  }
 
-  if (vscode?.McpHttpServerDefinition) {
-    try {
-      // Standard VS Code API: constructor(label, uri, headers, version)
-      return new vscode.McpHttpServerDefinition(SERVER_LABEL, uri, headers, SERVER_VERSION);
-    } catch {
-      // Fallback in case of options object signature
-      return new vscode.McpHttpServerDefinition({
-        label: SERVER_LABEL,
-        uri,
-        headers,
-        version: SERVER_VERSION
-      });
-    }
+  if (vscode?.McpStdioServerDefinition) {
+    return new vscode.McpStdioServerDefinition(
+      SERVER_LABEL,
+      'node',
+      [scriptPath],
+      env
+    );
   }
 
   return {
     label: SERVER_LABEL,
-    uri,
-    headers,
-    version: SERVER_VERSION
+    command: 'node',
+    args: [scriptPath],
+    env
   };
 }
 
@@ -76,10 +83,11 @@ function createProvider(context, emitter) {
   return {
     onDidChangeMcpServerDefinitions: emitter.event,
     provideMcpServerDefinitions: async () => {
-      const serverUrl = context.globalState.get(URL_KEY);
-      const token = await context.secrets.get(TOKEN_KEY);
-      if (!serverUrl || !token) return [];
-      return [createServerDefinition(serverUrl, token)];
+      const sonarUrl = context.globalState.get(URL_KEY);
+      if (!sonarUrl) return [];
+      const token = (await context.secrets.get(TOKEN_KEY)) || '';
+      const defaultProject = context.globalState.get(PROJECT_KEY) || '';
+      return [createServerDefinition(context, sonarUrl, token, defaultProject)];
     },
     resolveMcpServerDefinition: async (server) => server
   };
@@ -87,43 +95,64 @@ function createProvider(context, emitter) {
 
 async function configure(context, emitter) {
   const currentUrl = context.globalState.get(URL_KEY, DEFAULT_URL);
-  const serverUrl = await vscode.window.showInputBox({
-    title: 'SonarQube MCP server URL',
-    prompt: 'Enter the remote MCP endpoint',
+  const sonarUrl = await vscode.window.showInputBox({
+    title: 'SonarQube Server URL',
+    prompt: 'Enter your SonarQube URL (e.g. https://sonarcloud.io or http://localhost:9000)',
     value: currentUrl,
     ignoreFocusOut: true,
     validateInput: (value) => {
       try {
-        parseServerUrl(value);
+        parseSonarUrl(value);
         return undefined;
       } catch (error) {
         return error.message;
       }
     }
   });
-  if (serverUrl === undefined) return;
+  if (sonarUrl === undefined) return;
 
+  const currentToken = (await context.secrets.get(TOKEN_KEY)) || '';
   const token = await vscode.window.showInputBox({
-    title: 'SonarQube MCP token',
-    prompt: 'Enter your user-specific bearer token',
+    title: 'SonarQube Access Token (Optional)',
+    prompt: 'Enter your user access token (leave empty for public/anonymous instances)',
+    value: currentToken,
     password: true,
-    ignoreFocusOut: true,
-    validateInput: (value) => (value && value.trim()) ? undefined : 'A token is required.'
+    ignoreFocusOut: true
   });
   if (token === undefined) return;
 
-  await context.globalState.update(URL_KEY, serverUrl.trim());
-  await context.secrets.store(TOKEN_KEY, token.trim());
+  const currentProject = context.globalState.get(PROJECT_KEY, '');
+  const defaultProject = await vscode.window.showInputBox({
+    title: 'Default Project Key (Optional)',
+    prompt: 'Enter a default SonarQube project key to use when none is specified in tool calls',
+    value: currentProject,
+    ignoreFocusOut: true
+  });
+  if (defaultProject === undefined) return;
+
+  await context.globalState.update(URL_KEY, sonarUrl.trim());
+
+  if (token.trim()) {
+    await context.secrets.store(TOKEN_KEY, token.trim());
+  } else {
+    await context.secrets.delete(TOKEN_KEY);
+  }
+
+  if (defaultProject.trim()) {
+    await context.globalState.update(PROJECT_KEY, defaultProject.trim());
+  } else {
+    await context.globalState.update(PROJECT_KEY, undefined);
+  }
+
   emitter.fire();
-  vscode.window.showInformationMessage('SonarQube MCP credentials saved securely.');
+  vscode.window.showInformationMessage('SonarQube REST API MCP configuration saved.');
 }
 
 async function testConnection(context) {
-  const serverUrl = context.globalState.get(URL_KEY);
-  const token = await context.secrets.get(TOKEN_KEY);
-  if (!serverUrl || !token) {
+  const sonarUrl = context.globalState.get(URL_KEY);
+  if (!sonarUrl) {
     const action = await vscode.window.showWarningMessage(
-      'Configure the SonarQube MCP server URL and token first.',
+      'Configure the SonarQube server URL first.',
       'Configure'
     );
     if (action === 'Configure') {
@@ -131,36 +160,56 @@ async function testConnection(context) {
     }
     return;
   }
+
+  const token = (await context.secrets.get(TOKEN_KEY)) || '';
+  const testUrl = token ? validateAuthUrl(sonarUrl) : systemStatusUrl(sonarUrl);
+  const headers = { Accept: 'application/json' };
+  if (token) {
+    headers.Authorization = 'Basic ' + Buffer.from(token + ':').toString('base64');
+  }
+
   try {
-    const response = await fetch(healthUrl(serverUrl), {
+    const response = await fetch(testUrl, {
       method: 'GET',
+      headers,
       signal: AbortSignal.timeout(10000)
     });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    vscode.window.showInformationMessage(`SonarQube MCP connection succeeded (${redactUrl(serverUrl)}).`);
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const data = await response.json().catch(() => ({}));
+    if (token && data.valid === false) {
+      vscode.window.showErrorMessage(`SonarQube token is invalid for ${redactUrl(sonarUrl)}.`);
+      return;
+    }
+
+    const authType = token ? 'authenticated via Basic token' : 'anonymous/public';
+    vscode.window.showInformationMessage(`SonarQube connection succeeded (${redactUrl(sonarUrl)}, ${authType}).`);
   } catch (error) {
-    vscode.window.showErrorMessage(`SonarQube MCP connection failed: ${error.message}`);
+    vscode.window.showErrorMessage(`SonarQube connection failed: ${error.message}`);
   }
 }
 
 async function clearCredentials(context, emitter) {
   const confirmed = await vscode.window.showWarningMessage(
-    'Are you sure you want to clear saved SonarQube MCP credentials?',
+    'Are you sure you want to clear saved SonarQube MCP configuration?',
     { modal: true },
-    'Clear Credentials'
+    'Clear Configuration'
   );
-  if (confirmed !== 'Clear Credentials') return;
+  if (confirmed !== 'Clear Configuration') return;
 
   await context.globalState.update(URL_KEY, undefined);
+  await context.globalState.update(PROJECT_KEY, undefined);
   await context.secrets.delete(TOKEN_KEY);
   emitter.fire();
-  vscode.window.showInformationMessage('SonarQube MCP credentials cleared.');
+  vscode.window.showInformationMessage('SonarQube MCP configuration cleared.');
 }
 
 async function showStatus(context) {
-  const serverUrl = context.globalState.get(URL_KEY);
-  const hasToken = Boolean(await context.secrets.get(TOKEN_KEY));
-  if (!serverUrl || !hasToken) {
+  const sonarUrl = context.globalState.get(URL_KEY);
+  if (!sonarUrl) {
     const action = await vscode.window.showInformationMessage(
       'SonarQube MCP is not configured.',
       'Configure'
@@ -170,11 +219,18 @@ async function showStatus(context) {
     }
     return;
   }
+
+  const hasToken = Boolean(await context.secrets.get(TOKEN_KEY));
+  const defaultProject = context.globalState.get(PROJECT_KEY);
+  const authMode = hasToken ? 'Access token configured' : 'Anonymous / No token';
+  const projectMsg = defaultProject ? `, default project: ${defaultProject}` : '';
+
   const action = await vscode.window.showInformationMessage(
-    `SonarQube MCP is configured for ${redactUrl(serverUrl)}.`,
+    `SonarQube MCP: ${redactUrl(sonarUrl)} (${authMode}${projectMsg}).`,
     'Test Connection',
     'Reconfigure'
   );
+
   if (action === 'Test Connection') {
     vscode.commands.executeCommand('sonarqubeMcp.testConnection');
   } else if (action === 'Reconfigure') {
@@ -197,8 +253,9 @@ function deactivate() {}
 module.exports = {
   activate,
   deactivate,
-  healthUrl,
-  parseServerUrl,
+  parseSonarUrl,
+  systemStatusUrl,
+  validateAuthUrl,
   redactUrl,
   createServerDefinition
 };
