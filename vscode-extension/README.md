@@ -15,8 +15,10 @@ as an `Authorization: Bearer <token>` header.
 
 ### From a packaged extension
 
-Install the published **SonarQube MCP** extension from the Visual Studio Code
-Marketplace, then open the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`).
+Install the **SonarQube MCP** extension from the Visual Studio Code Marketplace
+when it is published, then open the Command Palette (`Ctrl+Shift+P` /
+`Cmd+Shift+P`). Until Marketplace publication, install the generated `.vsix`
+package with **Extensions: Install from VSIX...**.
 
 ### From source
 
